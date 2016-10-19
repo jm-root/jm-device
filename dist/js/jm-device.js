@@ -442,170 +442,6 @@ if (typeof module !== 'undefined' && module.exports) {
 
 (function () {
 
-    var logger = jm.getLogger('jm-device:billAcceptor');
-    var device = jm.device;
-    var utils = device.utils;
-
-    jm.device.ComponentBillAcceptor = jm.device.ComponentDevice.extend({
-        _className: 'billAcceptor',
-        _singleton: false,
-
-        //ICT106 General Protocol For RS232
-        statusDict: {
-            0x3E: 'Bill Acceptor enable',
-            0x5E: 'Bill Acceptor disable',
-            0x71: 'Bill Acceptor busy',
-            0x80: 'Bill Acceptor reset',
-            0x81: 'Bill type',
-            0xa1: 'Power Supply On communication',
-
-            0x10: 'Bill accept finished',
-            0x11: 'Bill accept failed',
-
-            0x20: 'Motor failure',
-            0x21: 'Checksum error',
-            0x22: 'Bill jam',
-            0x23: 'Bill remove',
-            0x24: 'Stacker open',
-            0x25: 'Sensor problem',
-            0x26: 'Communication failed',
-            0x27: 'Bill fish',
-            0x28: 'Stacker problem',
-            0x29: 'Bill reject',
-            0x2A: 'Invalid command',
-            0x2E: ' Reserved',
-            0x2F: 'Exception has been recovered'
-        },
-
-        billDict: {
-            0: 1,
-            1: 5,
-            2: 10,
-            3: 20,
-            4: 50,
-            5: 100
-        },
-
-        properties: {
-            enable: {get: 'getEnable', set: 'setEnable'}
-        },
-
-        ctor: function (e, opts) {
-            this._super(e, opts);
-            this._enable = true;
-        },
-
-        onAdd: function (e) {
-            this._super(e);
-            var self = this;
-
-            e.on('add', function (em) {
-                self.reset();
-            });
-
-            e.on('data', function (dv, len) {
-                if (len > 0) {
-                    self.onData(dv, len);
-                }
-            });
-        },
-
-        onData: function (dv, len) {
-            var self = this;
-            var e = self.entity;
-            var buf = new Uint8Array(dv.buffer);
-            var status = buf[0];
-            self.status = status;
-            e.emit('status', status, self.statusDict[status]);
-            switch (buf[0]) {
-                case 0x80:
-                    if (len == 2 && buf[1] == 0x8F) {
-                        logger.debug('billAcceptor request reset.')
-                        this.accept();
-                    }
-                    break;
-                case 0x81:
-                    if (len == 3 && buf[1] == 0x8F) {
-                        var v = buf[2] - 0x40;
-                        self.bill = v;
-                        var bill = v;
-                        var billValue = self.billDict[bill];
-                        e.emit('escrow', bill, billValue);
-                        logger.debug('billAcceptor request escrow ' + bill + ' ' + billValue);
-                        if (self.noEscrow) {
-                            self.accept();
-                        }
-                    }
-                    break;
-                case 0x10:
-                    var bill = self.bill;
-                    var billValue = self.billDict[bill];
-                    e.emit('bill', bill, billValue);
-                    logger.debug('billAcceptor accept bill ' + bill + ' ' + billValue);
-                    break;
-                case 0x11:
-                    logger.debug('billAcceptor accept bill failed ' + self.bill);
-                    break;
-                case 0x3E:
-                    this._enable = true;
-                    break;
-                case 0x5E:
-                    this._enable = false;
-                    break;
-            }
-        },
-
-        reset: function () {
-            this.send([0x30]);
-        },
-
-        getStatus: function () {
-            this.send([0x0C]);
-        },
-
-        accept: function () {
-            this.send([0x02]);
-        },
-
-        reject: function () {
-            this.send([0x0F]);
-        },
-
-        holdAt: function () {
-            this.send([0x18]);
-        },
-
-        getEnable: function () {
-            return this._enable;
-        },
-
-        setEnable: function (bEnable) {
-            if (bEnable) {
-                this.send([0x3E]);
-            } else {
-                this.send([0x5E]);
-            }
-        },
-
-        send: function (data, len) {
-            var e = this.entity;
-            var sp = e.serialPort.serialPort;
-            if (sp) {
-                return sp.write(data, len);
-            }
-            return 0;
-        }
-
-    });
-
-})();
-var jm = jm || {};
-if (typeof module !== 'undefined' && module.exports) {
-    jm = require('jm-ecs');
-}
-
-(function () {
-
     jm.device.ComponentDevice = jm.Component.extend({
         _className: 'device',
 
@@ -623,42 +459,182 @@ if (typeof module !== 'undefined' && module.exports) {
 
 (function () {
 
-    var logger = jm.getLogger('jm-device:hopper');
+    var logger = jm.getLogger('jm-device:serialPort');
     var device = jm.device;
     var utils = device.utils;
 
-    jm.device.ComponentHopper = jm.device.ComponentDevice.extend({
-        _className: 'hopper',
+    if(!jm.Uart){
+        //模拟jm.Uart
+        jm.Uart = jm.EventEmitter.extend({
+            _className: 'Uart',
+
+            ctor: function (opts) {
+                this._super(opts);
+            },
+
+            open: function (portName, baudRate, config) {
+                return true;
+            },
+
+            close: function() {
+            },
+
+            read: function(dv, len) {
+                return 0;
+            },
+
+            write: function(dv, len) {
+                return len;
+            }
+        });
+    }
+
+    jm.device.SerialPort = jm.EventEmitter.extend({
+        _className: 'SerialPort',
+
+        ctor: function (opts) {
+            this._super(opts);
+            if (jm.Uart) {
+                this.uart = new jm.Uart();
+            }
+        },
+
+        /*
+         *
+         * portName可以为序号或者字符串,对应关系为
+         * 0: COM1 /dev/ttyS0
+         * 1: COM2 /dev/ttyS1
+         * 依次类推
+         * optName=0 等价于win32下optName='COM1' 及 linux下optName='ttyS0'
+         *
+         * opts为串口配置参数, 默认值为
+         * {
+         *   baudRate: 9600
+         *   config: 0,
+         *   bufferLen: 128,
+         *   readInterval: 100
+         * }
+         * 表示波特率9600 8数据位 1停止位 无校验 读缓冲区128字节 读间隔时间100毫秒
+         *
+         * config为组合参数，例如
+         * config = jm.device.SerialPort.DATABIT7 | jm.device.SerialPort.STOPBIT2
+         * 表示7数据位， 2停止位
+         *
+         * */
+        open: function (portName, opts) {
+            if (!this.uart) return false;
+            var baudRate = 9600;
+            var config = 0;
+            var bufferLen = 128;
+            var readInterval = 100;
+            if (opts) {
+                if (opts.baudRate)
+                    baudRate = opts.baudRate;
+                if (opts.config)
+                    config = opts.config;
+                if (opts.bufferLen)
+                    bufferLen = opts.bufferLen;
+                if (opts.interval)
+                    readInterval = opts.interval;
+            }
+            this.portName = portName;
+            this.opts = opts;
+            var uart = this.uart;
+            if (uart.open(portName, baudRate, config)) {
+                var buffer = new ArrayBuffer(bufferLen);
+                this.readBuffer = buffer;
+                this.readDataView = new DataView(buffer);
+                this.emit('open');
+                logger.debug(this.portName + ' opened');
+                return true;
+            }
+            return false;
+        },
+
+        close: function () {
+            if (!this.uart) return;
+            var uart = this.uart;
+            uart.close();
+            this.emit('close');
+            logger.debug(this.portName + ' closed');
+        },
+
+        write: function (dvOrBuffer, len) {
+            if (!this.uart) return 0;
+            var uart = this.uart;
+
+            var dv = dvOrBuffer;
+            if (dv instanceof Array) {
+                dv = new Uint8Array(dv);
+            }
+            len = len || dv.byteLength;
+            if (len <= 0) return 0;
+            if (dv instanceof ArrayBuffer) {
+                dv = new DataView(dv);
+            } else if (dv instanceof Uint8Array) {
+                dv = new DataView(dv.buffer, dv.byteOffset, len);
+            }
+            if (!dv instanceof DataView) return 0;
+            var r = uart.write(dv, len);
+            if(jm.debug){
+                var s = this.portName + ' sended: len:' + r + ' hex:[';
+                s += utils.dataViewToHex(dv, len);
+                s += ']'
+                logger.debug(s);
+            }
+            return r;
+        },
+
+        update: function () {
+            if (!this.uart) return;
+            var uart = this.uart;
+
+            var dv = this.readDataView;
+            var len = uart.read(dv, this.readBuffer.byteLength);
+            if (len > 0) {
+                this.emit('data', dv, len);
+                if(jm.debug){
+                    var s = this.portName + ' recevied: len:' + len + ' hex:[';
+                    s += utils.dataViewToHex(dv, len);
+                    s += ']'
+                    logger.debug(s);
+                }
+            }
+        }
+
+    });
+
+    var SerialPortConsts = {
+        // UART DATA BIT
+        DATABIT7: 0x01,
+        DATABIT8: 0x00,
+
+        // UART STOP BIT
+        STOPBIT1: 0x00,
+        STOPBIT2: 0x02,
+
+        // UART PARITY BIT
+        PARITYNONE: 0x00,
+        PARITYODD: 0x0c,
+        PARITYEVEN: 0x08
+    };
+
+    for (var key in SerialPortConsts) {
+        var prototype = jm.device.SerialPort.prototype;
+        prototype[key] = SerialPortConsts[key];
+    }
+
+    jm.device.ComponentSerialPort = jm.device.ComponentDevice.extend({
+
+        _className: 'serialPort',
         _singleton: false,
-        PACKETHEAD1: 0x05,
-        PACKETHEAD2: 0x01,
-        MAXPACKETLEN: 12,
-
-        //MH China Protocol　Ver 0.4
-        //ict miniHopper MH-245GA CN61
-        statusDict: {
-            0x1: 'Motor problem',
-            0x2: 'Insufficient Coins',
-            0x8: 'Reserve',
-            0x10: 'Prism Sensor Failure',
-            0x20: 'Shaft Sensor Failure',
-            0x80: 'Dispenser is busy'
-        },
-
-        properties: {
-            remainCoins: {get: 'getRemainCoins'}
-        },
 
         ctor: function (e, opts) {
+            this.serialPort = new jm.device.SerialPort();
             this._super(e, opts);
-            this._enable = true;
-            this.machineId = opts.machineId || 0x03;
-            this.buf = [0x05, 0x10, this.machineId, 0x00, 0x00, 0x00];
-
-            this._data = new Uint8Array(this.MAXPACKETLEN);
-            this._offset = 0;
-            this._step = 0;
-            this._packetLen = 6;
+            if (opts.autoOpen) {
+                this.serialPort.open(opts.portName, opts.params);
+            }
         },
 
         onAdd: function (e) {
@@ -666,150 +642,26 @@ if (typeof module !== 'undefined' && module.exports) {
             var self = this;
 
             e.on('add', function (em) {
-                self.reset();
+                self.serialPort.on('data', function (dv, len) {
+                    e.emit('data', dv, len);
+                });
+
+                em.on('exit', function (o) {
+                    self.serialPort.close();
+                });
             });
-
-            e.on('data', function (dv, len) {
-                if (len > 0) {
-                    self.onData(dv, len);
-                }
-            });
         },
 
-        validPacket: function (buf, len) {
-            var r = true;
-            if (buf[2] == this.machineId && this.checkCrc(buf)) {
-            } else {
-                r = false;
-            }
-            if (!r) {
-                logger.debug('validPacket fail: ' + utils.dataViewToHex(buf, len));
-            }
-            return r;
+        update: function() {
+            this.serialPort.update();
         },
 
-        onPacket: function (buf, len) {
-            var self = this;
-            var e = self.entity;
-            var cmd = buf[3];
-            var val = buf[4];
-            self.cmd = cmd;
-            e.emit('cmd', cmd);
-            switch (cmd) {
-                case 0x04:
-                    var status = val;
-                    self.status = status;
-                    e.emit('status', status);
-                    break;
-                case 0x07:
-                    e.emit('payOutOne');
-                    break;
-                case 0x08:
-                    e.emit('payOutFin');
-                    break;
-                case 0x09:
-                    e.emit('clear');
-                    break;
-                case 0xAA:
-                    this._remainCoins = val;
-                    break;
-                case 0xBB:
-                    e.emit('payOutBusy');
-                    break;
-            }
+        read: function(dv, len) {
+            return this.serialPort.read(dv, len);
         },
 
-        onData: function (dv, len) {
-            var self = this;
-            var buf = new Uint8Array(dv.buffer);
-            len = len || dv.byteLength;
-
-            var packetLen = this._packetLen;
-            var data = this._data;
-            var offset = this._offset;
-            var step = this._step;
-
-            for (var i = 0; i < len; i++) {
-                var c = buf[i];
-                if (step == 0 && c == self.PACKETHEAD1) {
-                    step++;
-                } else if (step == 1 && c == self.PACKETHEAD2) {
-                    step++;
-                    data[offset++] = self.PACKETHEAD1;
-                    data[offset++] = self.PACKETHEAD2;
-                } else if (step == 2) {
-                    data[offset++] = c;
-
-                    if (offset == packetLen) {
-                        if (this.validPacket(data, offset)) {
-                            this.onPacket(data, packetLen);
-                        }
-                        step = 0;
-                        offset = 0;
-                    }
-                } else {
-                    step = 0;
-                    offset = 0;
-                }
-            }
-
-            this._offset = offset;
-            this._step = step;
-        },
-
-        reset: function () {
-            this.send([0x12, 0x00]);
-        },
-
-        getStatus: function () {
-            this.send([0x11, 0x00]);
-        },
-
-        payOut: function (v, withMsg) {
-            if (withMsg) {
-                this.send([0x14, v]);
-            } else {
-                this.send([0x10, v]);
-            }
-        },
-
-        readRemainCoins: function () {
-            this.send([0x13, 0x00]);
-        },
-
-        getRemainCoins: function () {
-            return this._remainCoins || 0;
-        },
-
-        calcCrc: function (data) {
-            var c = 0;
-            var len = 6;
-            for (var i = 0; i < len - 1; i++) {
-                c += data[i];
-            }
-            data[len - 1] = c;
-            return c;
-        },
-
-        checkCrc: function (data) {
-            var len = 6;
-            var c = data[len - 1];
-            var nc = this.calcCrc(data);
-            return c == nc;
-        },
-
-        send: function (data) {
-            var buf = this.buf;
-            for (var i = 0; i < data.length; i++) {
-                buf[i + 3] = data[i];
-            }
-            this.calcCrc(buf);
-            var e = this.entity;
-            var sp = e.serialPort.serialPort;
-            if (sp) {
-                return sp.write(buf);
-            }
-            return 0;
+        write: function(dv, len) {
+            return this.serialPort.write(dv, len);
         }
 
     });
@@ -1029,353 +881,6 @@ if (typeof module !== 'undefined' && module.exports) {
         var prototype = jm.device.ComponentIOAdapter.prototype;
         prototype[key] = SeekType[key];
     }
-
-})();
-var jm = jm || {};
-if (typeof module !== 'undefined' && module.exports) {
-    jm = require('jm-ecs');
-}
-
-(function () {
-
-    var logger = jm.getLogger('jm-device:receiptPrinter');
-    var device = jm.device;
-    var utils = device.utils;
-
-    jm.device.ComponentReceiptPrinter = jm.device.ComponentDevice.extend({
-        _className: 'receiptPrinter',
-        _singleton: false,
-
-        ctor: function (e, opts) {
-            this.noPaper = false;
-            this._super(e, opts);
-        },
-
-        onAdd: function (e) {
-            this._super(e);
-            var self = this;
-
-            e.on('data', function (dv, len) {
-                for (var i = 0; i < len; i++) {
-                    var v = dv.getInt8(i);
-                    var b = v >= 1;
-                    if (this.noPaper != b) {
-                        this.noPaper = b;
-                        e.emit('status', b);
-                    }
-                }
-            });
-        },
-
-        reset: function () {
-            var buffer = new Uint8Array([0x1B, 0x40]);
-            this.print(buffer);
-        },
-
-        getStatus: function () {
-            var buffer = new Uint8Array([0x10, 0x04, 0x04]);
-            this.print(buffer);
-        },
-
-        print: function (data, len) {
-            var e = this.entity;
-            var sp = e.serialPort.serialPort;
-            if (sp) {
-                return sp.write(data, len);
-            }
-            return 0;
-        },
-
-        cut: function (halfCut) {
-            var buffer = new Uint8Array([0x1B, 0x69]);
-            if (halfCut) {
-                buffer = new Uint8Array([0x1B, 0x6D]);
-            }
-            this.print(buffer);
-        },
-
-        zouzhi: function (n) {
-            n = n || 30;
-            var buffer = new Uint8Array([0x1B, 0x4A, n]);
-            this.print(buffer);
-        },
-
-        setAlign: function (n) {
-            n = n || 0;
-            var buffer = new Uint8Array([0x1B, 0x61, n]);
-            this.print(buffer);
-        },
-
-        setLineSpace: function (n) {
-            n = n || 0;
-            var buffer = new Uint8Array([0x1B, 0x32]);
-            if (n) {
-                buffer = new Uint8Array([0x1B, 0x33, n]);
-            }
-            this.print(buffer);
-        },
-
-        setPosition: function (col, row) {
-            col = col || 0;
-            row = row || 0;
-            var buffer = new Uint8Array([0x1B, 0x24, col, row]);
-            this.print(buffer);
-        },
-
-        setFontSize: function (opts) {
-            var cmd = 0x1B;
-            var n = 0;
-            if (opts.scaleHeight) n |= 0x20;
-            if (opts.scaleWidth) n |= 0x10;
-            if (opts.hanzi) {
-                n = 0;
-                cmd = 0x1C;
-                if (opts.scaleHeight) n |= 0x8;
-                if (opts.scaleWidth) n |= 0x4;
-            }
-            var buffer = new ArrayBuffer(4);
-            var dv = new DataView(buffer);
-            dv.setInt8(0, cmd, false);
-            dv.setInt8(1, 0x21, false);
-            dv.setInt8(2, n, false);
-            var len = 3;
-            this.print(dv, len);
-        },
-
-        setHanziFontSize: function (scaleWidth, scaleHeight) {
-            var opts = {
-                hanzi: true,
-                scaleWidth: scaleWidth,
-                scaleHeight: scaleHeight
-            };
-            this.setFontSize(opts);
-        },
-
-        setXiwenFontSize: function (scaleWidth, scaleHeight) {
-            var opts = {
-                hanzi: false,
-                scaleWidth: scaleWidth,
-                scaleHeight: scaleHeight
-            };
-            this.setFontSize(opts);
-        }
-
-    });
-
-})();
-var jm = jm || {};
-if (typeof module !== 'undefined' && module.exports) {
-    jm = require('jm-ecs');
-}
-
-(function () {
-
-    var logger = jm.getLogger('jm-device:serialPort');
-    var device = jm.device;
-    var utils = device.utils;
-
-    if(!jm.Uart){
-        //模拟jm.Uart
-        jm.Uart = jm.EventEmitter.extend({
-            _className: 'Uart',
-
-            ctor: function (opts) {
-                this._super(opts);
-            },
-
-            open: function (portName, baudRate, config) {
-                return true;
-            },
-
-            close: function() {
-            },
-
-            read: function(dv, len) {
-                return 0;
-            },
-
-            write: function(dv, len) {
-                return len;
-            }
-        });
-    }
-
-    jm.device.SerialPort = jm.EventEmitter.extend({
-        _className: 'SerialPort',
-
-        ctor: function (opts) {
-            this._super(opts);
-            if (jm.Uart) {
-                this.uart = new jm.Uart();
-            }
-        },
-
-        /*
-         *
-         * portName可以为序号或者字符串,对应关系为
-         * 0: COM1 /dev/ttyS0
-         * 1: COM2 /dev/ttyS1
-         * 依次类推
-         * optName=0 等价于win32下optName='COM1' 及 linux下optName='ttyS0'
-         *
-         * opts为串口配置参数, 默认值为
-         * {
-         *   baudRate: 9600
-         *   config: 0,
-         *   bufferLen: 128,
-         *   readInterval: 100
-         * }
-         * 表示波特率9600 8数据位 1停止位 无校验 读缓冲区128字节 读间隔时间100毫秒
-         *
-         * config为组合参数，例如
-         * config = jm.device.SerialPort.DATABIT7 | jm.device.SerialPort.STOPBIT2
-         * 表示7数据位， 2停止位
-         *
-         * */
-        open: function (portName, opts) {
-            if (!this.uart) return false;
-            var baudRate = 9600;
-            var config = 0;
-            var bufferLen = 128;
-            var readInterval = 100;
-            if (opts) {
-                if (opts.baudRate)
-                    baudRate = opts.baudRate;
-                if (opts.config)
-                    config = opts.config;
-                if (opts.bufferLen)
-                    bufferLen = opts.bufferLen;
-                if (opts.interval)
-                    readInterval = opts.interval;
-            }
-            this.portName = portName;
-            this.opts = opts;
-            var uart = this.uart;
-            if (uart.open(portName, baudRate, config)) {
-                var buffer = new ArrayBuffer(bufferLen);
-                this.readBuffer = buffer;
-                this.readDataView = new DataView(buffer);
-                this.emit('open');
-                logger.debug(this.portName + ' opened');
-                return true;
-            }
-            return false;
-        },
-
-        close: function () {
-            if (!this.uart) return;
-            var uart = this.uart;
-            uart.close();
-            this.emit('close');
-            logger.debug(this.portName + ' closed');
-        },
-
-        write: function (dvOrBuffer, len) {
-            if (!this.uart) return 0;
-            var uart = this.uart;
-
-            var dv = dvOrBuffer;
-            if (dv instanceof Array) {
-                dv = new Uint8Array(dv);
-            }
-            len = len || dv.byteLength;
-            if (len <= 0) return 0;
-            if (dv instanceof ArrayBuffer) {
-                dv = new DataView(dv);
-            } else if (dv instanceof Uint8Array) {
-                dv = new DataView(dv.buffer, dv.byteOffset, len);
-            }
-            if (!dv instanceof DataView) return 0;
-            var r = uart.write(dv, len);
-            if(jm.debug){
-                var s = this.portName + ' sended: len:' + r + ' hex:[';
-                s += utils.dataViewToHex(dv, len);
-                s += ']'
-                logger.debug(s);
-            }
-            return r;
-        },
-
-        update: function () {
-            if (!this.uart) return;
-            var uart = this.uart;
-
-            var dv = this.readDataView;
-            var len = uart.read(dv, this.readBuffer.byteLength);
-            if (len > 0) {
-                this.emit('data', dv, len);
-                if(jm.debug){
-                    var s = this.portName + ' recevied: len:' + len + ' hex:[';
-                    s += utils.dataViewToHex(dv, len);
-                    s += ']'
-                    logger.debug(s);
-                }
-            }
-        }
-
-    });
-
-    var SerialPortConsts = {
-        // UART DATA BIT
-        DATABIT7: 0x01,
-        DATABIT8: 0x00,
-
-        // UART STOP BIT
-        STOPBIT1: 0x00,
-        STOPBIT2: 0x02,
-
-        // UART PARITY BIT
-        PARITYNONE: 0x00,
-        PARITYODD: 0x0c,
-        PARITYEVEN: 0x08
-    };
-
-    for (var key in SerialPortConsts) {
-        var prototype = jm.device.SerialPort.prototype;
-        prototype[key] = SerialPortConsts[key];
-    }
-
-    jm.device.ComponentSerialPort = jm.device.ComponentDevice.extend({
-
-        _className: 'serialPort',
-        _singleton: false,
-
-        ctor: function (e, opts) {
-            this.serialPort = new jm.device.SerialPort();
-            this._super(e, opts);
-            if (opts.autoOpen) {
-                this.serialPort.open(opts.portName, opts.params);
-            }
-        },
-
-        onAdd: function (e) {
-            this._super(e);
-            var self = this;
-
-            e.on('add', function (em) {
-                self.serialPort.on('data', function (dv, len) {
-                    e.emit('data', dv, len);
-                });
-
-                em.on('exit', function (o) {
-                    self.serialPort.close();
-                });
-            });
-        },
-
-        update: function() {
-            this.serialPort.update();
-        },
-
-        read: function(dv, len) {
-            return this.serialPort.read(dv, len);
-        },
-
-        write: function(dv, len) {
-            return this.serialPort.write(dv, len);
-        }
-
-    });
 
 })();
 /**
@@ -1753,7 +1258,7 @@ if (typeof module !== 'undefined' && module.exports) {
         },
 
         onPacket: function (buf, len) {
-            if(debug){
+            if(jm.debug){
                 logger.debug('onPacket:' + utils.dataViewToHex(buf, len));
             }
             switch (this.type) {
@@ -1773,6 +1278,502 @@ if (typeof module !== 'undefined' && module.exports) {
             }
         }
 
+
+    });
+
+})();
+
+var jm = jm || {};
+if (typeof module !== 'undefined' && module.exports) {
+    jm = require('jm-ecs');
+}
+
+(function () {
+
+    var logger = jm.getLogger('jm-device:hopper');
+    var device = jm.device;
+    var utils = device.utils;
+
+    jm.device.ComponentHopper = jm.device.ComponentDevice.extend({
+        _className: 'hopper',
+        _singleton: false,
+        PACKETHEAD1: 0x05,
+        PACKETHEAD2: 0x01,
+        MAXPACKETLEN: 12,
+
+        //MH China Protocol　Ver 0.4
+        //ict miniHopper MH-245GA CN61
+        statusDict: {
+            0x1: 'Motor problem',
+            0x2: 'Insufficient Coins',
+            0x8: 'Reserve',
+            0x10: 'Prism Sensor Failure',
+            0x20: 'Shaft Sensor Failure',
+            0x80: 'Dispenser is busy'
+        },
+
+        properties: {
+            remainCoins: {get: 'getRemainCoins'}
+        },
+
+        ctor: function (e, opts) {
+            this._super(e, opts);
+            this._enable = true;
+            this.machineId = opts.machineId || 0x03;
+            this.buf = [0x05, 0x10, this.machineId, 0x00, 0x00, 0x00];
+
+            this._data = new Uint8Array(this.MAXPACKETLEN);
+            this._offset = 0;
+            this._step = 0;
+            this._packetLen = 6;
+        },
+
+        onAdd: function (e) {
+            this._super(e);
+            var self = this;
+
+            e.on('add', function (em) {
+                self.reset();
+            });
+
+            e.on('data', function (dv, len) {
+                if (len > 0) {
+                    self.onData(dv, len);
+                }
+            });
+        },
+
+        validPacket: function (buf, len) {
+            var r = true;
+            if (buf[2] == this.machineId && this.checkCrc(buf)) {
+            } else {
+                r = false;
+            }
+            if (!r) {
+                logger.debug('validPacket fail: ' + utils.dataViewToHex(buf, len));
+            }
+            return r;
+        },
+
+        onPacket: function (buf, len) {
+            var self = this;
+            var e = self.entity;
+            var cmd = buf[3];
+            var val = buf[4];
+            self.cmd = cmd;
+            e.emit('cmd', cmd);
+            switch (cmd) {
+                case 0x04:
+                    var status = val;
+                    self.status = status;
+                    e.emit('status', status);
+                    break;
+                case 0x07:
+                    e.emit('payOutOne');
+                    break;
+                case 0x08:
+                    e.emit('payOutFin');
+                    break;
+                case 0x09:
+                    e.emit('clear');
+                    break;
+                case 0xAA:
+                    this._remainCoins = val;
+                    break;
+                case 0xBB:
+                    e.emit('payOutBusy');
+                    break;
+            }
+        },
+
+        onData: function (dv, len) {
+            var self = this;
+            var buf = new Uint8Array(dv.buffer);
+            len = len || dv.byteLength;
+
+            var packetLen = this._packetLen;
+            var data = this._data;
+            var offset = this._offset;
+            var step = this._step;
+
+            for (var i = 0; i < len; i++) {
+                var c = buf[i];
+                if (step == 0 && c == self.PACKETHEAD1) {
+                    step++;
+                } else if (step == 1 && c == self.PACKETHEAD2) {
+                    step++;
+                    data[offset++] = self.PACKETHEAD1;
+                    data[offset++] = self.PACKETHEAD2;
+                } else if (step == 2) {
+                    data[offset++] = c;
+
+                    if (offset == packetLen) {
+                        if (this.validPacket(data, offset)) {
+                            this.onPacket(data, packetLen);
+                        }
+                        step = 0;
+                        offset = 0;
+                    }
+                } else {
+                    step = 0;
+                    offset = 0;
+                }
+            }
+
+            this._offset = offset;
+            this._step = step;
+        },
+
+        reset: function () {
+            this.send([0x12, 0x00]);
+        },
+
+        getStatus: function () {
+            this.send([0x11, 0x00]);
+        },
+
+        payOut: function (v, withMsg) {
+            if (withMsg) {
+                this.send([0x14, v]);
+            } else {
+                this.send([0x10, v]);
+            }
+        },
+
+        readRemainCoins: function () {
+            this.send([0x13, 0x00]);
+        },
+
+        getRemainCoins: function () {
+            return this._remainCoins || 0;
+        },
+
+        calcCrc: function (data) {
+            var c = 0;
+            var len = 6;
+            for (var i = 0; i < len - 1; i++) {
+                c += data[i];
+            }
+            data[len - 1] = c;
+            return c;
+        },
+
+        checkCrc: function (data) {
+            var len = 6;
+            var c = data[len - 1];
+            var nc = this.calcCrc(data);
+            return c == nc;
+        },
+
+        send: function (data) {
+            var buf = this.buf;
+            for (var i = 0; i < data.length; i++) {
+                buf[i + 3] = data[i];
+            }
+            this.calcCrc(buf);
+            var e = this.entity;
+            var sp = e.serialPort.serialPort;
+            if (sp) {
+                return sp.write(buf);
+            }
+            return 0;
+        }
+
+    });
+
+})();
+var jm = jm || {};
+if (typeof module !== 'undefined' && module.exports) {
+    jm = require('jm-ecs');
+}
+
+(function () {
+
+    var logger = jm.getLogger('jm-device:receiptPrinter');
+    var device = jm.device;
+    var utils = device.utils;
+
+    jm.device.ComponentReceiptPrinter = jm.device.ComponentDevice.extend({
+        _className: 'receiptPrinter',
+        _singleton: false,
+
+        ctor: function (e, opts) {
+            this.noPaper = false;
+            this._super(e, opts);
+        },
+
+        onAdd: function (e) {
+            this._super(e);
+            var self = this;
+
+            e.on('data', function (dv, len) {
+                for (var i = 0; i < len; i++) {
+                    var v = dv.getInt8(i);
+                    var b = v >= 1;
+                    if (this.noPaper != b) {
+                        this.noPaper = b;
+                        e.emit('status', b);
+                    }
+                }
+            });
+        },
+
+        reset: function () {
+            var buffer = new Uint8Array([0x1B, 0x40]);
+            this.print(buffer);
+        },
+
+        getStatus: function () {
+            var buffer = new Uint8Array([0x10, 0x04, 0x04]);
+            this.print(buffer);
+        },
+
+        print: function (data, len) {
+            var e = this.entity;
+            var sp = e.serialPort.serialPort;
+            if (sp) {
+                return sp.write(data, len);
+            }
+            return 0;
+        },
+
+        cut: function (halfCut) {
+            var buffer = new Uint8Array([0x1B, 0x69]);
+            if (halfCut) {
+                buffer = new Uint8Array([0x1B, 0x6D]);
+            }
+            this.print(buffer);
+        },
+
+        zouzhi: function (n) {
+            n = n || 30;
+            var buffer = new Uint8Array([0x1B, 0x4A, n]);
+            this.print(buffer);
+        },
+
+        setAlign: function (n) {
+            n = n || 0;
+            var buffer = new Uint8Array([0x1B, 0x61, n]);
+            this.print(buffer);
+        },
+
+        setLineSpace: function (n) {
+            n = n || 0;
+            var buffer = new Uint8Array([0x1B, 0x32]);
+            if (n) {
+                buffer = new Uint8Array([0x1B, 0x33, n]);
+            }
+            this.print(buffer);
+        },
+
+        setPosition: function (col, row) {
+            col = col || 0;
+            row = row || 0;
+            var buffer = new Uint8Array([0x1B, 0x24, col, row]);
+            this.print(buffer);
+        },
+
+        setFontSize: function (opts) {
+            var cmd = 0x1B;
+            var n = 0;
+            if (opts.scaleHeight) n |= 0x20;
+            if (opts.scaleWidth) n |= 0x10;
+            if (opts.hanzi) {
+                n = 0;
+                cmd = 0x1C;
+                if (opts.scaleHeight) n |= 0x8;
+                if (opts.scaleWidth) n |= 0x4;
+            }
+            var buffer = new ArrayBuffer(4);
+            var dv = new DataView(buffer);
+            dv.setInt8(0, cmd, false);
+            dv.setInt8(1, 0x21, false);
+            dv.setInt8(2, n, false);
+            var len = 3;
+            this.print(dv, len);
+        },
+
+        setHanziFontSize: function (scaleWidth, scaleHeight) {
+            var opts = {
+                hanzi: true,
+                scaleWidth: scaleWidth,
+                scaleHeight: scaleHeight
+            };
+            this.setFontSize(opts);
+        },
+
+        setXiwenFontSize: function (scaleWidth, scaleHeight) {
+            var opts = {
+                hanzi: false,
+                scaleWidth: scaleWidth,
+                scaleHeight: scaleHeight
+            };
+            this.setFontSize(opts);
+        }
+
+    });
+
+})();
+var jm = jm || {};
+if (typeof module !== 'undefined' && module.exports) {
+    jm = require('jm-ecs');
+}
+
+(function () {
+
+    var logger = jm.getLogger('jm-device:billAcceptor');
+    var device = jm.device;
+    var utils = device.utils;
+
+    jm.device.ComponentBillAcceptor = jm.device.ComponentDevice.extend({
+        _className: 'billAcceptor',
+        _singleton: false,
+
+        //ICT106 General Protocol For RS232
+        statusDict: {
+            0x3E: 'Bill Acceptor enable',
+            0x5E: 'Bill Acceptor disable',
+            0x71: 'Bill Acceptor busy',
+            0x80: 'Bill Acceptor reset',
+            0x81: 'Bill type',
+            0xa1: 'Power Supply On communication',
+
+            0x10: 'Bill accept finished',
+            0x11: 'Bill accept failed',
+
+            0x20: 'Motor failure',
+            0x21: 'Checksum error',
+            0x22: 'Bill jam',
+            0x23: 'Bill remove',
+            0x24: 'Stacker open',
+            0x25: 'Sensor problem',
+            0x26: 'Communication failed',
+            0x27: 'Bill fish',
+            0x28: 'Stacker problem',
+            0x29: 'Bill reject',
+            0x2A: 'Invalid command',
+            0x2E: ' Reserved',
+            0x2F: 'Exception has been recovered'
+        },
+
+        billDict: {
+            0: 1,
+            1: 5,
+            2: 10,
+            3: 20,
+            4: 50,
+            5: 100
+        },
+
+        properties: {
+            enable: {get: 'getEnable', set: 'setEnable'}
+        },
+
+        ctor: function (e, opts) {
+            this._super(e, opts);
+            this._enable = true;
+        },
+
+        onAdd: function (e) {
+            this._super(e);
+            var self = this;
+
+            e.on('add', function (em) {
+                self.reset();
+            });
+
+            e.on('data', function (dv, len) {
+                if (len > 0) {
+                    self.onData(dv, len);
+                }
+            });
+        },
+
+        onData: function (dv, len) {
+            var self = this;
+            var e = self.entity;
+            var buf = new Uint8Array(dv.buffer);
+            var status = buf[0];
+            self.status = status;
+            e.emit('status', status, self.statusDict[status]);
+            switch (buf[0]) {
+                case 0x80:
+                    if (len == 2 && buf[1] == 0x8F) {
+                        logger.debug('billAcceptor request reset.')
+                        this.accept();
+                    }
+                    break;
+                case 0x81:
+                    if (len == 3 && buf[1] == 0x8F) {
+                        var v = buf[2] - 0x40;
+                        self.bill = v;
+                        var bill = v;
+                        var billValue = self.billDict[bill];
+                        e.emit('escrow', bill, billValue);
+                        logger.debug('billAcceptor request escrow ' + bill + ' ' + billValue);
+                        if (self.noEscrow) {
+                            self.accept();
+                        }
+                    }
+                    break;
+                case 0x10:
+                    var bill = self.bill;
+                    var billValue = self.billDict[bill];
+                    e.emit('bill', bill, billValue);
+                    logger.debug('billAcceptor accept bill ' + bill + ' ' + billValue);
+                    break;
+                case 0x11:
+                    logger.debug('billAcceptor accept bill failed ' + self.bill);
+                    break;
+                case 0x3E:
+                    this._enable = true;
+                    break;
+                case 0x5E:
+                    this._enable = false;
+                    break;
+            }
+        },
+
+        reset: function () {
+            this.send([0x30]);
+        },
+
+        getStatus: function () {
+            this.send([0x0C]);
+        },
+
+        accept: function () {
+            this.send([0x02]);
+        },
+
+        reject: function () {
+            this.send([0x0F]);
+        },
+
+        holdAt: function () {
+            this.send([0x18]);
+        },
+
+        getEnable: function () {
+            return this._enable;
+        },
+
+        setEnable: function (bEnable) {
+            if (bEnable) {
+                this.send([0x3E]);
+            } else {
+                this.send([0x5E]);
+            }
+        },
+
+        send: function (data, len) {
+            var e = this.entity;
+            var sp = e.serialPort.serialPort;
+            if (sp) {
+                return sp.write(data, len);
+            }
+            return 0;
+        }
 
     });
 

@@ -27,6 +27,15 @@ gulp.task('js', function () {
   return gulp.src([
       'lib/consts.js',
       'lib/utils.js',
+      'lib/calibrate.js',
+      'lib/components/device.js',
+      'lib/components/serialport.js',
+      'lib/components/ioadapter.js',
+      'lib/components/touchDevice.js',
+      'lib/components/touchDeviceHC.js',
+      'lib/components/hopper.js',
+      'lib/components/receiptprinter.js',
+      'lib/components/billAcceptor.js',
       'lib/**/*.js',
       '!lib/components/index.js',
       '!lib/index.js'
