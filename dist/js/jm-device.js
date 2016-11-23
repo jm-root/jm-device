@@ -4,6 +4,7 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 (function(){
+    if(jm.device) return;
     jm.device = jm.device || {};
     var device = jm.device;
 
@@ -48,8 +49,8 @@ if ((typeof exports !== 'undefined' && typeof module !== 'undefined')) {
 }
 
 (function () {
-    var device = jm.device || {};
-
+    if(jm.device.utils) return;
+    var device = jm.device;
     /**
      * utils对象
      * @class  utils
@@ -188,8 +189,7 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 (function () {
-
-
+    if(jm.device.Calibrate) return;
     jm.device.Calibrate = jm.EventEmitter.extend({
         _className: 'calibrate',
 
@@ -435,13 +435,14 @@ if (typeof module !== 'undefined' && module.exports) {
     };
 
 })();
+
 var jm = jm || {};
 if (typeof module !== 'undefined' && module.exports) {
     jm = require('jm-ecs');
 }
 
 (function () {
-
+    if(jm.device.ComponentDevice) return;
     jm.device.ComponentDevice = jm.Component.extend({
         _className: 'device',
 
@@ -452,13 +453,14 @@ if (typeof module !== 'undefined' && module.exports) {
     });
 
 })();
+
 var jm = jm || {};
 if (typeof module !== 'undefined' && module.exports) {
     jm = require('jm-ecs');
 }
 
 (function () {
-
+    if(jm.device.SerialPort) return;
     var logger = jm.getLogger('jm-device:serialPort');
     var device = jm.device;
     var utils = device.utils;
@@ -667,6 +669,7 @@ if (typeof module !== 'undefined' && module.exports) {
     });
 
 })();
+
 /**
  *
  *    IO扩展板模块
@@ -692,7 +695,7 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 (function () {
-
+    if(jm.device.ComponentIOAdapter) return;
     jm.device.ComponentIOAdapter = jm.device.ComponentDevice.extend({
         _className: 'ioAdapter',
         _singleton: false,
@@ -883,6 +886,7 @@ if (typeof module !== 'undefined' && module.exports) {
     }
 
 })();
+
 /**
  *
  *    触摸屏设备
@@ -913,7 +917,7 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 (function () {
-
+    if(jm.device.ComponentTouchDevice) return;
     var logger = jm.getLogger('jm-device:touchDevice');
     
     jm.device.ComponentTouchDevice = jm.device.ComponentIOAdapter.extend({
@@ -1122,6 +1126,7 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 (function () {
+    if(jm.device.ComponentTouchDeviceHC) return;
     var logger = jm.getLogger('jm-device:touchDeviceHC');
     var device = jm.device;
     var utils = device.utils;
@@ -1289,7 +1294,7 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 (function () {
-
+    if(jm.device.ComponentHopper) return;
     var logger = jm.getLogger('jm-device:hopper');
     var device = jm.device;
     var utils = device.utils;
@@ -1482,13 +1487,14 @@ if (typeof module !== 'undefined' && module.exports) {
     });
 
 })();
+
 var jm = jm || {};
 if (typeof module !== 'undefined' && module.exports) {
     jm = require('jm-ecs');
 }
 
 (function () {
-
+    if(jm.device.ComponentReceiptPrinter) return;
     var logger = jm.getLogger('jm-device:receiptPrinter');
     var device = jm.device;
     var utils = device.utils;
@@ -1614,13 +1620,14 @@ if (typeof module !== 'undefined' && module.exports) {
     });
 
 })();
+
 var jm = jm || {};
 if (typeof module !== 'undefined' && module.exports) {
     jm = require('jm-ecs');
 }
 
 (function () {
-
+    if(jm.device.ComponentBillAcceptor) return;
     var logger = jm.getLogger('jm-device:billAcceptor');
     var device = jm.device;
     var utils = device.utils;

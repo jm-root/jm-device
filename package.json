@@ -1,6 +1,6 @@
 {
   "name": "jm-device",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Device lib",
   "main": "./lib/index",
   "scripts": {
